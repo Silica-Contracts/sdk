@@ -1,0 +1,44 @@
+[package]
+name = "silica-contract-sdk"
+version = "0.1.0"
+edition = "2021"
+authors = ["Silica Protocol Team"]
+license = "MIT OR Apache-2.0"
+description = "Rust SDK for building Silica smart contracts"
+repository = "https://github.com/Silica-Contracts/sdk"
+documentation = "https://docs.silica.network/contracts/sdk"
+keywords = ["silica", "smart-contracts", "wasm", "blockchain"]
+categories = ["wasm", "cryptography"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Serialization (no_std compatible)
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# Cryptography (no_std compatible)
+blake3 = { version = "1.5", default-features = false }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+subtle = { version = "2.5", default-features = false }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["alloc"] }
+
+# Utilities (no_std compatible)
+itoa = { version = "1.0", default-features = false }
+spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }
+scopeguard = "1.2"
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["full"] }
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["std"]
+std = ["serde/std", "postcard/use-std", "blake3/std", "hex/std"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
