@@ -4,7 +4,7 @@
 //! validation, and constant-time comparison helpers.
 
 use crate::error::{ContractError, ContractResult};
-use crate::storage::{Map, storage};
+use crate::storage::{storage, Map};
 use alloc::string::{String, ToString};
 use core::sync::atomic::{AtomicBool, Ordering};
 

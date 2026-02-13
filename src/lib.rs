@@ -29,17 +29,24 @@ pub mod storage;
 
 /// Common imports for contract development
 pub mod prelude {
-    pub use crate::context::{Context, context, try_context};
+    pub use crate::context::{context, try_context, Context};
     pub use crate::crypto;
     pub use crate::error::{ContractError, ContractResult};
     pub use crate::events::{emit, log};
+    pub use crate::ffi::{compute_nullifier, verify_merkle_path, verify_zk_proof};
     pub use crate::security::safe_math;
     pub use crate::security::validation;
     pub use crate::security::{AccessControl, ReentrancyGuard};
-    pub use crate::storage::{Map, Storage, storage};
+    pub use crate::storage::{storage, Map, Storage};
 
     pub use alloc::format;
     pub use alloc::string::{String, ToString};
     pub use alloc::vec::Vec;
     pub use serde::{Deserialize, Serialize};
+}
+
+/// ZK proof types (must match protocol_config/src/vm/syscalls/abi.rs)
+pub mod zk {
+    pub const PROOF_TYPE_SHIELDING: u32 = 1;
+    pub const PROOF_TYPE_UNSHIELDING: u32 = 2;
 }

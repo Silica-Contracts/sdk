@@ -109,7 +109,7 @@ pub fn generate_keypairs(count: usize) -> ContractResult<Vec<([u8; 32], [u8; 32]
     let mut pairs = Vec::with_capacity(count);
     for index in 0..count {
         let mut hasher = Hasher::new();
-    hasher.update(b"silica-contract-sdk-keygen");
+        hasher.update(b"silica-contract-sdk-keygen");
         hasher.update(&(index as u64).to_le_bytes());
         let digest = hasher.finalize();
 

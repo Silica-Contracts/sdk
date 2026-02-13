@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 #[cfg(target_arch = "wasm32")]
 mod host {
-    use super::{ContractError, ContractResult, String, Vec, vec};
+    use super::{vec, ContractError, ContractResult, String, Vec};
 
     // Host function imports from the runtime
     #[link(wasm_import_module = "env")]
@@ -51,6 +51,32 @@ mod host {
         pub fn get_call_data_length() -> i32;
         pub fn read_call_data(buffer_ptr: i32, buffer_len: i32) -> i32;
         pub fn write_return_data(buffer_ptr: i32, buffer_len: i32) -> i32;
+
+        // ZK Proof syscalls
+        pub fn verify_merkle_path(
+            leaf_ptr: i32,
+            leaf_len: i32,
+            root_ptr: i32,
+            root_len: i32,
+            path_ptr: i32,
+            path_len: i32,
+        ) -> i32;
+
+        pub fn compute_nullifier(
+            commitment_ptr: i32,
+            commitment_len: i32,
+            spending_key_ptr: i32,
+            spending_key_len: i32,
+            output_ptr: i32,
+        ) -> i32;
+
+        pub fn verify_zk_proof(
+            proof_ptr: i32,
+            proof_len: i32,
+            public_inputs_ptr: i32,
+            public_inputs_len: i32,
+            proof_type: i32,
+        ) -> i32;
 
     }
 
@@ -188,8 +214,8 @@ mod host {
     ) -> ContractResult<bool> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-        let verifying_key = VerifyingKey::from_bytes(pubkey)
-            .map_err(|_| ContractError::InvalidSignature)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(pubkey).map_err(|_| ContractError::InvalidSignature)?;
         let signature = Signature::from_bytes(signature);
 
         match verifying_key.verify(message, &signature) {
@@ -260,6 +286,63 @@ mod host {
             )?);
         }
         Ok(results)
+    }
+
+    pub fn verify_merkle_path_internal(
+        leaf_ptr: i32,
+        leaf_len: i32,
+        root_ptr: i32,
+        root_len: i32,
+        path_ptr: i32,
+        path_len: i32,
+    ) -> i32 {
+        unsafe { verify_merkle_path(leaf_ptr, leaf_len, root_ptr, root_len, path_ptr, path_len) }
+    }
+
+    pub fn compute_nullifier_internal(
+        commitment: &[u8; 32],
+        spending_key: &[u8; 32],
+    ) -> ContractResult<[u8; 32]> {
+        let mut output = [0u8; 32];
+        let result = unsafe {
+            compute_nullifier(
+                commitment.as_ptr() as i32,
+                commitment.len() as i32,
+                spending_key.as_ptr() as i32,
+                spending_key.len() as i32,
+                output.as_mut_ptr() as i32,
+            )
+        };
+        if result == 0 {
+            Ok(output)
+        } else {
+            Err(ContractError::Custom(String::from(
+                "Nullifier computation failed",
+            )))
+        }
+    }
+
+    pub fn verify_zk_proof_internal(
+        proof: &[u8],
+        public_inputs: &[u8],
+        proof_type: u32,
+    ) -> ContractResult<bool> {
+        let result = unsafe {
+            verify_zk_proof(
+                proof.as_ptr() as i32,
+                proof.len() as i32,
+                public_inputs.as_ptr() as i32,
+                public_inputs.len() as i32,
+                proof_type as i32,
+            )
+        };
+        match result {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err(ContractError::Custom(String::from(
+                "ZK proof verification error",
+            ))),
+        }
     }
 }
 
@@ -412,8 +495,8 @@ mod host {
     ) -> ContractResult<bool> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-        let verifying_key = VerifyingKey::from_bytes(pubkey)
-            .map_err(|_| ContractError::InvalidSignature)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(pubkey).map_err(|_| ContractError::InvalidSignature)?;
         let signature = Signature::from_bytes(signature);
 
         match verifying_key.verify(message, &signature) {
@@ -484,6 +567,38 @@ mod host {
             )?);
         }
         Ok(results)
+    }
+
+    pub fn verify_merkle_path_internal(
+        _leaf_ptr: i32,
+        _leaf_len: i32,
+        _root_ptr: i32,
+        _root_len: i32,
+        _path_ptr: i32,
+        _path_len: i32,
+    ) -> i32 {
+        -1
+    }
+
+    pub fn compute_nullifier_internal(
+        commitment: &[u8; 32],
+        spending_key: &[u8; 32],
+    ) -> ContractResult<[u8; 32]> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(commitment);
+        hasher.update(spending_key);
+        hasher.update(b"nullifier");
+        Ok(*hasher.finalize().as_bytes())
+    }
+
+    pub fn verify_zk_proof_internal(
+        _proof: &[u8],
+        _public_inputs: &[u8],
+        _proof_type: u32,
+    ) -> ContractResult<bool> {
+        Err(ContractError::Custom(String::from(
+            "ZK proof verification not available in mock runtime",
+        )))
     }
 
     pub fn reset() {
@@ -639,6 +754,48 @@ pub fn batch_verify_signatures(
     signatures: &[&[u8; 64]],
 ) -> ContractResult<Vec<bool>> {
     host::batch_verify_signatures(pubkeys, messages, signatures)
+}
+
+/// Verify Merkle path for note inclusion proof
+pub fn verify_merkle_path(leaf: &[u8; 32], root: &[u8; 32], path: &[u8]) -> ContractResult<bool> {
+    let result = host::verify_merkle_path_internal(
+        leaf.as_ptr() as i32,
+        leaf.len() as i32,
+        root.as_ptr() as i32,
+        root.len() as i32,
+        path.as_ptr() as i32,
+        path.len() as i32,
+    );
+
+    match result {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(ContractError::Custom(String::from(
+            "Merkle verification error",
+        ))),
+    }
+}
+
+/// Compute nullifier hash from commitment and spending key
+pub fn compute_nullifier(
+    commitment: &[u8; 32],
+    spending_key: &[u8; 32],
+) -> ContractResult<[u8; 32]> {
+    host::compute_nullifier_internal(commitment, spending_key)
+}
+
+/// Verify a ZK proof (shielding or unshielding)
+///
+/// # Arguments
+/// * `proof` - Serialized ZK proof bytes
+/// * `public_inputs` - Public input bytes
+/// * `proof_type` - 1 for shielding, 2 for unshielding
+pub fn verify_zk_proof(
+    proof: &[u8],
+    public_inputs: &[u8],
+    proof_type: u32,
+) -> ContractResult<bool> {
+    host::verify_zk_proof_internal(proof, public_inputs, proof_type)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

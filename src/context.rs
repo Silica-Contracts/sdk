@@ -220,10 +220,9 @@ mod tests {
         prepare_mock_env();
         let ctx = try_context().expect("context should be available");
 
-        assert!(
-            ctx.transfer_tokens("chert1recipient000000000000", 500)
-                .is_ok()
-        );
+        assert!(ctx
+            .transfer_tokens("chert1recipient000000000000", 500)
+            .is_ok());
 
         let address_err = ctx
             .transfer_tokens("", 10)
