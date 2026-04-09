@@ -47,6 +47,15 @@ pub mod prelude {
 
 /// ZK proof types (must match protocol_config/src/vm/syscalls/abi.rs)
 pub mod zk {
+    /// Shielding proof (Pedersen commitment based)
     pub const PROOF_TYPE_SHIELDING: u32 = 1;
+    /// Unshielding proof (Pedersen commitment based)
     pub const PROOF_TYPE_UNSHIELDING: u32 = 2;
+
+    /// ElGamal range proof for account balance privacy
+    pub const PROOF_TYPE_ELGAMAL_RANGE: u32 = 3;
+    /// ElGamal conservation proof (sum inputs = sum outputs)
+    pub const PROOF_TYPE_ELGAMAL_CONSERVATION: u32 = 4;
+    /// ElGamal equality proof
+    pub const PROOF_TYPE_ELGAMAL_EQUALITY: u32 = 5;
 }

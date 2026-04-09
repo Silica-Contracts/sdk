@@ -52,6 +52,30 @@ mod host {
         pub fn read_call_data(buffer_ptr: i32, buffer_len: i32) -> i32;
         pub fn write_return_data(buffer_ptr: i32, buffer_len: i32) -> i32;
 
+        pub fn call_contract(
+            target_ptr: i32,
+            target_len: i32,
+            entry_ptr: i32,
+            entry_len: i32,
+            data_ptr: i32,
+            data_len: i32,
+            gas_limit: u64,
+            result_ptr: i32,
+            result_len_ptr: i32,
+        ) -> i32;
+
+        pub fn static_call_contract(
+            target_ptr: i32,
+            target_len: i32,
+            entry_ptr: i32,
+            entry_len: i32,
+            data_ptr: i32,
+            data_len: i32,
+            gas_limit: u64,
+            result_ptr: i32,
+            result_len_ptr: i32,
+        ) -> i32;
+
         // ZK Proof syscalls
         pub fn verify_merkle_path(
             leaf_ptr: i32,
@@ -76,6 +100,16 @@ mod host {
             public_inputs_ptr: i32,
             public_inputs_len: i32,
             proof_type: i32,
+        ) -> i32;
+
+        // ElGamal range proof verification (for account privacy)
+        pub fn verify_elgamal_range_proof(
+            proof_ptr: i32,
+            proof_len: i32,
+            ciphertext_ptr: i32,
+            ciphertext_len: i32,
+            public_key_ptr: i32,
+            public_key_len: i32,
         ) -> i32;
 
     }
@@ -199,6 +233,76 @@ mod host {
             Ok(())
         } else {
             Err(ContractError::ReturnDataWriteFailed)
+        }
+    }
+
+    pub fn call_contract_internal(
+        target: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        const MAX_RESULT_SIZE: usize = 65_536;
+
+        let mut result = vec![0_u8; MAX_RESULT_SIZE];
+        let mut result_len = result.len() as u32;
+        let status = unsafe {
+            call_contract(
+                target.as_ptr() as i32,
+                target.len() as i32,
+                entry_point.as_ptr() as i32,
+                entry_point.len() as i32,
+                data.as_ptr() as i32,
+                data.len() as i32,
+                gas_limit,
+                result.as_mut_ptr() as i32,
+                &mut result_len as *mut u32 as i32,
+            )
+        };
+
+        if status == 0 {
+            result.truncate(result_len as usize);
+            Ok(result)
+        } else {
+            Err(ContractError::ContractCallFailed(alloc::format!(
+                "host call_contract failed with status {}",
+                status
+            )))
+        }
+    }
+
+    pub fn static_call_contract_internal(
+        target: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        const MAX_RESULT_SIZE: usize = 65_536;
+
+        let mut result = vec![0_u8; MAX_RESULT_SIZE];
+        let mut result_len = result.len() as u32;
+        let status = unsafe {
+            static_call_contract(
+                target.as_ptr() as i32,
+                target.len() as i32,
+                entry_point.as_ptr() as i32,
+                entry_point.len() as i32,
+                data.as_ptr() as i32,
+                data.len() as i32,
+                gas_limit,
+                result.as_mut_ptr() as i32,
+                &mut result_len as *mut u32 as i32,
+            )
+        };
+
+        if status == 0 {
+            result.truncate(result_len as usize);
+            Ok(result)
+        } else {
+            Err(ContractError::ContractCallFailed(alloc::format!(
+                "host static_call_contract failed with status {}",
+                status
+            )))
         }
     }
 
@@ -344,6 +448,30 @@ mod host {
             ))),
         }
     }
+
+    pub fn verify_elgamal_range_proof_internal(
+        proof: &[u8],
+        ciphertext: &[u8],
+        public_key: &[u8],
+    ) -> ContractResult<bool> {
+        let result = unsafe {
+            verify_elgamal_range_proof(
+                proof.as_ptr() as i32,
+                proof.len() as i32,
+                ciphertext.as_ptr() as i32,
+                ciphertext.len() as i32,
+                public_key.as_ptr() as i32,
+                public_key.len() as i32,
+            )
+        };
+        match result {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err(ContractError::Custom(String::from(
+                "ElGamal range proof verification error",
+            ))),
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -358,9 +486,20 @@ mod host {
         pub data: Vec<u8>,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ContractCallRecord {
+        pub target: String,
+        pub entry_point: String,
+        pub data: Vec<u8>,
+        pub gas_limit: u64,
+        pub read_only: bool,
+    }
+
     #[derive(Default)]
     pub struct MockRuntime {
         storage: alloc::collections::BTreeMap<(String, String), Vec<u8>>,
+        contract_call_responses: alloc::collections::BTreeMap<(String, String, bool), Vec<u8>>,
+        contract_calls: Vec<ContractCallRecord>,
         sender: String,
         contract_address: String,
         block_height: u64,
@@ -375,6 +514,8 @@ mod host {
     impl MockRuntime {
         fn reset(&mut self) {
             self.storage.clear();
+            self.contract_call_responses.clear();
+            self.contract_calls.clear();
             self.events.clear();
             self.logs.clear();
             self.call_data.clear();
@@ -412,6 +553,47 @@ mod host {
                 topic: topic.to_string(),
                 data: data.to_vec(),
             });
+        }
+
+        fn set_contract_call_response(
+            &mut self,
+            target: &str,
+            entry_point: &str,
+            read_only: bool,
+            data: &[u8],
+        ) {
+            self.contract_call_responses.insert(
+                (target.to_string(), entry_point.to_string(), read_only),
+                data.to_vec(),
+            );
+        }
+
+        fn call_contract(
+            &mut self,
+            target: &str,
+            entry_point: &str,
+            data: &[u8],
+            gas_limit: u64,
+            read_only: bool,
+        ) -> ContractResult<Vec<u8>> {
+            self.contract_calls.push(ContractCallRecord {
+                target: target.to_string(),
+                entry_point: entry_point.to_string(),
+                data: data.to_vec(),
+                gas_limit,
+                read_only,
+            });
+
+            self.contract_call_responses
+                .get(&(target.to_string(), entry_point.to_string(), read_only))
+                .cloned()
+                .ok_or_else(|| {
+                    ContractError::ContractCallFailed(alloc::format!(
+                        "No mock contract call response registered for {}:{}",
+                        target,
+                        entry_point
+                    ))
+                })
         }
     }
 
@@ -481,6 +663,24 @@ mod host {
             rt.return_data = data.to_vec();
             Ok(())
         })
+    }
+
+    pub fn call_contract_internal(
+        target: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        with_runtime(|rt| rt.call_contract(target, entry_point, data, gas_limit, false))
+    }
+
+    pub fn static_call_contract_internal(
+        target: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        with_runtime(|rt| rt.call_contract(target, entry_point, data, gas_limit, true))
     }
 
     fn hash_blake3_bytes(data: &[u8]) -> [u8; 32] {
@@ -601,6 +801,16 @@ mod host {
         )))
     }
 
+    pub fn verify_elgamal_range_proof_internal(
+        _proof: &[u8],
+        _ciphertext: &[u8],
+        _public_key: &[u8],
+    ) -> ContractResult<bool> {
+        Err(ContractError::Custom(String::from(
+            "ElGamal range proof verification not available in mock runtime",
+        )))
+    }
+
     pub fn reset() {
         with_runtime(|rt| rt.reset());
     }
@@ -660,6 +870,24 @@ mod host {
         })
     }
 
+    pub fn set_contract_call_response(
+        target: &str,
+        entry_point: &str,
+        read_only: bool,
+        data: &[u8],
+    ) {
+        with_runtime(|rt| rt.set_contract_call_response(target, entry_point, read_only, data));
+    }
+
+    pub fn take_contract_calls() -> Vec<ContractCallRecord> {
+        with_runtime(|rt| {
+            let mut drained = Vec::new();
+            core::mem::swap(&mut drained, &mut rt.contract_calls);
+            drained
+        })
+    }
+
+    pub use ContractCallRecord as MockContractCallRecord;
     pub use EventRecord as MockEventRecord;
 }
 
@@ -709,6 +937,24 @@ pub(crate) fn read_call_data() -> ContractResult<Vec<u8>> {
 
 pub(crate) fn write_return_data(data: &[u8]) -> ContractResult<()> {
     host::write_return_data_internal(data)
+}
+
+pub fn call_contract(
+    target: &str,
+    entry_point: &str,
+    data: &[u8],
+    gas_limit: u64,
+) -> ContractResult<Vec<u8>> {
+    host::call_contract_internal(target, entry_point, data, gas_limit)
+}
+
+pub fn static_call_contract(
+    target: &str,
+    entry_point: &str,
+    data: &[u8],
+    gas_limit: u64,
+) -> ContractResult<Vec<u8>> {
+    host::static_call_contract_internal(target, entry_point, data, gas_limit)
 }
 
 /// Hash data with BLAKE3 (public wrapper for crypto module)
@@ -798,12 +1044,27 @@ pub fn verify_zk_proof(
     host::verify_zk_proof_internal(proof, public_inputs, proof_type)
 }
 
+/// Verify an ElGamal range proof for account balance privacy
+///
+/// # Arguments
+/// * `proof` - Serialized Bulletproof (from elastic-elgamal)
+/// * `ciphertext` - ElGamal ciphertext (c1 || c2, 64 bytes)
+/// * `public_key` - ElGamal public key (32 bytes compressed)
+pub fn verify_elgamal_range_proof(
+    proof: &[u8],
+    ciphertext: &[u8],
+    public_key: &[u8],
+) -> ContractResult<bool> {
+    host::verify_elgamal_range_proof_internal(proof, ciphertext, public_key)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mock {
     use super::host;
     use alloc::string::String;
     use alloc::vec::Vec;
 
+    pub use host::MockContractCallRecord as ContractCallRecord;
     pub use host::MockEventRecord as EventRecord;
 
     pub fn reset() {
@@ -848,5 +1109,18 @@ pub mod mock {
 
     pub fn inspect_storage(account: &str, key: &str) -> Vec<u8> {
         host::inspect_storage(account, key)
+    }
+
+    pub fn set_contract_call_response(
+        target: &str,
+        entry_point: &str,
+        read_only: bool,
+        data: &[u8],
+    ) {
+        host::set_contract_call_response(target, entry_point, read_only, data)
+    }
+
+    pub fn take_contract_calls() -> Vec<ContractCallRecord> {
+        host::take_contract_calls()
     }
 }

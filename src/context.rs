@@ -63,6 +63,32 @@ impl Context {
         ffi::write_return_data(data)
     }
 
+    /// Call another contract and return its raw return bytes.
+    pub fn call_contract(
+        &self,
+        contract: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        validation::validate_address(contract)?;
+        validation::validate_non_empty(entry_point, "entry_point")?;
+        ffi::call_contract(contract, entry_point, data, gas_limit)
+    }
+
+    /// Call another contract in read-only mode and return its raw return bytes.
+    pub fn static_call_contract(
+        &self,
+        contract: &str,
+        entry_point: &str,
+        data: &[u8],
+        gas_limit: u64,
+    ) -> ContractResult<Vec<u8>> {
+        validation::validate_address(contract)?;
+        validation::validate_non_empty(entry_point, "entry_point")?;
+        ffi::static_call_contract(contract, entry_point, data, gas_limit)
+    }
+
     /// Transfer tokens from the current contract to a recipient.
     pub fn transfer_tokens(&self, recipient: &str, amount: u64) -> ContractResult<()> {
         validation::validate_address(recipient)?;
@@ -233,5 +259,26 @@ mod tests {
             .transfer_tokens("chert1recipient000000000000", 0)
             .expect_err("zero amount should fail");
         assert!(matches!(amount_err, ContractError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn contract_calls_validate_inputs() {
+        prepare_mock_env();
+        let ctx = try_context().expect("context should be available");
+
+        let address_err = ctx
+            .call_contract("", "balance_of", b"", 10)
+            .expect_err("empty target should fail");
+        assert!(matches!(address_err, ContractError::InvalidArgument(_)));
+
+        let entry_err = ctx
+            .static_call_contract("chert1callee000000000000000", "", b"", 10)
+            .expect_err("empty entry point should fail");
+        assert!(matches!(entry_err, ContractError::InvalidArgument(_)));
+
+        let runtime_err = ctx
+            .call_contract("chert1callee000000000000000", "balance_of", b"", 10)
+            .expect_err("mock runtime should reject nested contract calls");
+        assert!(matches!(runtime_err, ContractError::ContractCallFailed(_)));
     }
 }
