@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::crypto;
     pub use crate::error::{ContractError, ContractResult};
     pub use crate::events::{emit, log};
-    pub use crate::ffi::{compute_nullifier, verify_merkle_path, verify_zk_proof};
+    pub use crate::ffi::{call_contract, static_call_contract, compute_nullifier, verify_merkle_path, verify_zk_proof};
     pub use crate::security::safe_math;
     pub use crate::security::validation;
     pub use crate::security::{AccessControl, ReentrancyGuard};
